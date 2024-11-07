@@ -123,7 +123,7 @@ dataset_clean$Hierarchical_Cluster <- as.factor(cluster_assignment_hc)
 
 # PCA reduces dimensionality, showing clusters along principal components (with the most variance).
 pca_result <- prcomp(dataset_clean[numeric_cols], scale. = TRUE)
-factoextra::fviz_pca_ind(pca_result, geom.ind = "point", habillage = dataset_clean$KMeans_Cluster, 
+factoextra::fviz_pca_ind(pca_result, geom.ind = "point", habillage = as.factor(kmeans_results$cluster), 
                          addEllipses = TRUE, palette = "jco") +
   ggtitle("PCA - KMeans Clusters") +
   theme_minimal()
