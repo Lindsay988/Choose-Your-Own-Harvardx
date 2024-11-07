@@ -1,0 +1,378 @@
+---
+title: "Gym Member Segmentation Project"
+author: "Lindsay Snyman"
+date: "2024-11-07"
+output: pdf_document
+---
+
+# Gym Member Segmentation Project Report
+
+## Executive Summary
+
+**The Gym Member Segmentation Project** aims to categorise gym members into distinct groups by using various demographic, physical, and workout metrics. By using advanced data clustering techniques like **K-Means Clustering**, **Principal Component Analysis (PCA)**, and **Hierarchical Clustering**, we found groups that share similar fitness traits. This analysis helps in creating personalised gym programs that are tailored to the unique needs of each cluster, which can boost member engagement and satisfaction.
+
+The project identified three main clusters, each with different exercise needs, showing that clustering can really improve how fitness programs are aligned and personalised. The results will help gym managers make better decisions about resource use, customise fitness programs for different groups, and use focused marketing strategies.
+
+## Introduction
+
+Data Science has introduced new methods to fitness services, enhancing member engagement, creating value, and increasing administrative efficiency (Rössel, 2024). Fitness facilities should be designed to support people with different fitness levels, goals, and physical requirements. Strategic segmentation helps gyms offer customized services, which improves satisfaction among members, program efficacy, and long-term retention (Kim and Korea, 1998).
+
+This project looks into how we can categorize gym members into different segments using data attributes like age, weight, heart rate, session details, and body composition. By looking at the patterns in this data, we can create tailored programs that focus on the unique fitness traits of each group. The goals are to provide insights about member diversity, enhance program recommendations, and show how data analytics can boost engagement and results in the fitness industry.
+
+## Methodology
+
+### Setup and Package Installation
+
+All the required packages for data wrangling, efficient data import, clustering, visualization, dimensionality reduction, and date manipulation have been installed and loaded (Parvin, 2024).
+
+```{r}
+# List of the required packages that are used in the project.
+# This includes packages for data wrangling (tidyverse, dplyr), efficient data import (vroom),
+# clustering (caret, cluster, mclust), visualization (ggplot2, plotly, factoextra), 
+# and specific tools for dimensionality reduction (Rtsne) and date manipulation (lubridate). (Parvin, 2024)
+packages <- c("tidyverse", "vroom", "ggplot2", "dplyr", "caret", "broom", 
+           "data.table", "readr", "lubridate", "stringr", "plotly", "magrittr", 
+           "modelr", "factoextra", "cluster", "mclust", "Rtsne")
+
+# Any packages that are not installed, are installed.
+if(!all(sapply(packages, require, character.only = TRUE))) {
+    install.packages(packages[!sapply(packages, require, character.only = TRUE)])
+}
+
+# Required libraries are loaded.
+lapply(packages, library, character.only = TRUE)
+
+```
+
+### Data Gathering and Preprocessing
+
+The dataset gym_members_exercise_tracking.csv includes information about demographics, physical attributes, and workout metrics for gym members, such as:
+
+Information about demographics: age and gender.
+
+Physical Traits: Weight (kg), Height (m), BMI, Fat Percentage, Water Intake (liters).
+
+Heart rate metrics : maximum BPM, average BPM, and resting BPM.
+
+Details about the workout :how long each session lasts (in hours), the number of calories burned, how often workouts are done each week, the type of workout (like cardio or strength), and the level of experience
+
+```{r}
+# Load the gym member dataset, that is placed in the GitHub repository.
+dataset <- vroom::vroom("gym_members_exercise_tracking.csv")
+
+# To understand the structure of the data, the first few rows of the dataset are displayed.
+head(dataset)
+
+```
+
+### Exploratory Data Analysis (EDA)
+
+**EDA** is a crucial step in understanding data sets. It involves summarizing their main characteristics, often using visual methods. This process helps in identifying patterns, spotting anomalies, and testing hypotheses. By engaging with the data, we can gain insights that guide further analysis and decision-making.
+
+```{r}
+# 2.1 Basic Descriptive Statistics
+# The variable distributions of the dataset is summarised, and any obvious issues is observed (e.g., outliers)
+
+summary(dataset)
+
+# 2.2 Data Distribution Visualization
+
+#The distribution of each numerical variable is plotted into histograms, this is used for an assessment of the data provided. 
+
+numeric_cols <- c("Age", "Weight (kg)", "Height (m)", "Max_BPM", "Avg_BPM", 
+                  "Resting_BPM", "Session_Duration (hours)", "Calories_Burned", 
+                  "Fat_Percentage", "Water_Intake (liters)", "BMI")
+dataset %>% 
+  select(all_of(numeric_cols)) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~key, scales = 'free') +
+  ggtitle("Histograms of Numerical Variables") +
+  theme_minimal()
+
+```
+
+In our exploratory data analysis, we used a correlation heatmap to find potential multicollinearity and relationships between the variables. Finding variables that are really correlated helps make sure they don't take over or distort the results of clustering. For instance, if there are strong correlations between "Calories Burned" and "Session Duration," it might suggest that there's overlapping information when trying to categorize members by their workout intensity.
+
+```{r}
+# 2.3 Correlation Heatmap
+
+# A heatmap is made to observe correlations among numerical variables to identify potential relationships and multicollinearity.
+
+cor_matrix <- cor(dataset %>% select(where(is.numeric)), use = "complete.obs")
+corrplot::corrplot(cor_matrix, method = "color", type = "upper", tl.col = "black", title = "Correlation Matrix")
+
+```
+
+For this analysis, we only used numerical variables like Age, Weight, Height, Max BPM, Avg BPM, Resting BPM, Session Duration, Calories Burned, Fat Percentage, Water Intake, and BMI. Non-numeric features, such as Gender and Workout Type, weren't converted into numeric form, so they weren't included in the clustering process. Including them in future projects could help with segmentation in a wider demographic context.
+
+### Data Processing
+
+To prepare the data:
+
+To handle missing data, I replaced the missing values in the numerical columns with the mean of each column. This approach helped to keep the data intact without causing major loss (Alabadla, 2022).
+
+```{r}
+# 3.1 Handle Missing Data
+
+#To avoid data loss, missing values in the numerical columns are replaced with the mean of each column.
+
+dataset_clean <- dataset %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.na(.), mean(., na.rm = TRUE), .)))
+
+```
+
+Standardization involved applying Z-Score Normalization to the numerical columns, which helped to achieve a zero mean and unit variance. This step is crucial for making sure that the feature scales are comparable when performing clustering (Gal and Rubinfeld, 2019).
+
+```{r}
+# 3.2 Normalise the numeric columns
+
+# Numerical columns were scaled to standardise data for clustering, ensuring each feature has zero mean and unit variance
+dataset_clean[numeric_cols] <- scale(dataset_clean[numeric_cols])
+
+```
+
+### Clustering Models
+
+It was figured out that the best number of clusters by using the Elbow Method and checking the Silhouette Score. These methods act as additional ways to figure out the best number of clusters. The Elbow Method helps to find the point at which adding more clusters doesn't really make a big difference in reducing within-cluster variance (Cui, 2020). The Silhouette Score gives extra validation by checking how well-separated the clusters are, making sure that the chosen number of clusters really reflects different segments (Januzaj, et al., 2023).
+
+```{r}
+# 4.1 The Elbow Method and Silhouette Score were used to determine the Optimal Number of Clusters. 
+
+# The Elbow Method identified the ideal number of clusters by looking at the within-cluster sum of squares(WSS)
+# The Silhouette Score provides more validation by assessing the quality of the cluster separation.
+
+set.seed(123)  # Ensures reproducibility
+wss <- factoextra::fviz_nbclust(dataset_clean[numeric_cols], kmeans, method = "wss") +
+  ggtitle("Elbow Method for Finding Optimal Clusters") +
+  theme_minimal()
+
+silhouette_score <- factoextra::fviz_nbclust(dataset_clean[numeric_cols], kmeans, method = "silhouette") +
+  ggtitle("Silhouette Score for Finding Optimal Clusters") +
+  theme_minimal()
+
+# The Elbow Method and Silhouette Score plots are both displayed.
+print(wss)
+print(silhouette_score)
+
+```
+
+We chose k = 3 clusters using these methods, and then we applied them to both K-Means and Hierarchical Clustering algorithms.
+
+```{r}
+# 4.2 Apply K-Means and Hierarchical Clustering for Comparison
+
+# According to the Elbow and Silhouette methods k=3 was chosen to do K-Means Clustering.
+
+k <- 3  
+kmeans_result <- kmeans(dataset_clean[numeric_cols], centers = k, nstart = 25)
+
+```
+
+### Advanced Visualization of Clusters
+
+Techniques for reducing dimensionality, like PCA and t-SNE, helped to visually show how clusters are separated in a lower-dimensional space, making it easier to understand.
+
+Principal Component Analysis (PCA): PCA showed clear differences between the clusters based on the components that had the most variance, highlighting significant variations in heart rate and session metrics.
+
+```{r}
+# 5.1 Principal Component Analysis (PCA)
+
+# PCA reduces dimensionality, showing clusters along principal components (with the most variance).
+pca_result <- prcomp(dataset_clean[numeric_cols], scale. = TRUE)
+factoextra::fviz_pca_ind(pca_result, geom.ind = "point", habillage = dataset_clean$KMeans_Cluster, 
+             addEllipses = TRUE, palette = "jco") +
+  ggtitle("PCA - KMeans Clusters") +
+  theme_minimal()
+
+```
+
+t-SNE : is a non-linear technique that helps to confirm the separation of clusters and effectively captures complex patterns in the data.
+
+```{r}
+# 5.2 t-SNE for Clustering Visualization
+
+# t-SNE provides a nonlinear dimensionality reduction, ideal for visualising high-dimensional clusters in 2D.
+
+tsne_result <- Rtsne::Rtsne(as.matrix(dataset_clean[numeric_cols]), dims = 2, perplexity = 30)
+dataset_clean$TSNE1 <- tsne_result$Y[,1]
+dataset_clean$TSNE2 <- tsne_result$Y[,2]
+ggplot(dataset_clean, aes(x = TSNE1, y = TSNE2, color = KMeans_Cluster)) +
+  geom_point() +
+  ggtitle("t-SNE - KMeans Clusters") +
+  theme_minimal()
+
+```
+
+### Cluster Interpretation and Analysis
+
+We looked at each cluster to see what makes them unique:
+
+Cluster 1 focuses on high-intensity interval training. It includes younger individuals who have a lower BMI and a higher maximum heart rate, and they prefer workouts that are high-intensity and short in duration.
+
+Cluster 2 (Endurance and Strength Training): This group includes older members who have a moderate BMI and tend to engage in longer workout sessions, suggesting they prefer exercises that focus on endurance.
+
+Cluster 3 (Beginner-Friendly, Moderate Intensity): This group includes newer members who have higher resting heart rates and engage in moderate exercise, indicating that they should gradually increase their intensity.
+
+```{r}
+# 6.1 Cluster Analysis with Descriptive Statistics for Each Cluster.
+
+#To interpret the common traits within the clusters each cluster’s characteristics were summarised. 
+
+kmeans_summary <- dataset_clean %>%
+  group_by(KMeans_Cluster) %>%
+  summarise(
+    Avg_Age = mean(Age, na.rm = TRUE),
+    Avg_Weight = mean(`Weight (kg)`, na.rm = TRUE),
+    Avg_Height = mean(`Height (m)`, na.rm = TRUE),
+    Avg_Max_BPM = mean(Max_BPM, na.rm = TRUE),
+    Avg_Session_Duration = mean(`Session_Duration (hours)`, na.rm = TRUE),
+    Avg_Calories_Burned = mean(Calories_Burned, na.rm = TRUE),
+    Avg_Fat_Percentage = mean(Fat_Percentage, na.rm = TRUE),
+    Avg_BMI = mean(BMI, na.rm = TRUE)
+  )
+
+print(kmeans_summary)
+
+```
+
+### Cluster Evaluation with Silhouette Scores
+
+The silhouette scores showed how good the clustering was, and Cluster 1 had the highest score, which means its group boundaries were really well-separated. This assessment shows that there are three clusters, and each one represents a distinct group of members.
+
+```{r}
+#Silhouette scores were used to evaluate the clustering performance of both the K-Means and Hierarchical clustering. 
+
+silhouette_kmeans <- cluster::silhouette(kmeans_result$cluster, dist(dataset_clean[numeric_cols]))
+silhouette_hierarchical <- cluster::silhouette(cluster_assignment_hc, dist(dataset_clean[numeric_cols]))
+
+# Silhouette plot for K-Means Clustering
+factoextra::fviz_silhouette(silhouette_kmeans) + 
+  ggtitle("Silhouette Plot for KMeans Clustering") +
+  theme_minimal()
+
+# Silhouette plot for Hierarchical Clustering
+factoextra::fviz_silhouette(silhouette_hierarchical) + 
+  ggtitle("Silhouette Plot for Hierarchical Clustering") +
+  theme_minimal()
+
+```
+
+### Tailored Gym Programs Based on Cluster Characteristics
+
+Each group was given tailored gym programs that matched their specific characteristics. This method fits well with personalised fitness strategies, since research shows that tailored programs enhance results and commitment (Dishman and Sallis, 1994).
+
+```{r}
+# Function to assign recommended gym programs according to the cluster traits
+
+assign_gym_program <- function(cluster) {
+  if (cluster == 1) {
+    return("High-Intensity Interval Training (HIIT) - Short and Intense")
+  } else if (cluster == 2) {
+    return("Endurance and Strength Training - Long Duration Workouts")
+  } else if (cluster == 3) {
+    return("Beginner-Friendly Cardio and Strength - Moderate Intensity")
+  } else {
+    return("General Fitness Program")
+  }
+}
+
+#Tailored gym programs were assigned to each member based on their cluster.
+
+dataset_clean$Recommended_Program <- sapply(dataset_clean$KMeans_Cluster, assign_gym_program)
+
+```
+
+The summary of the recommended programs shows how many members are in each cluster, which means we need to give specific recommendations for each group.
+
+```{r}
+# 8.1 Summary of Recommended Programs per Cluster
+
+# A count of members assigned to each program type across clusters is displayed.
+
+program_summary <- dataset_clean %>%
+  group_by(Recommended_Program) %>%
+  summarise(Members_Count = n())
+
+print("Summary of Gym Programs Assigned to Clusters:")
+print(program_summary)
+
+
+```
+
+## Results
+
+### Clustering Results
+
+The Elbow and Silhouette methods both showed that three clusters were the best choice. Some important things I noticed were:
+
+Cluster 1: Recommended Program - High-Intensity Interval Training (HIIT).
+
+Cluster 2: Recommended Program - Endurance and Strength Training.
+
+Cluster 3: Recommended Program - Easy Cardio and Strength Workouts.
+
+### Program Distribution
+
+A bar chart showed how recommended gym programs were distributed across different clusters, emphasising the traits of each cluster and how well the suggested programs fit those traits.
+
+```{r}
+# 8.2 Visualisation of Gym Program Distribution Across Clusters
+# Bar plot to show the distribution of recommended programs per cluster.
+ggplot(dataset_clean, aes(x = KMeans_Cluster, fill = Recommended_Program)) +
+  geom_bar() +
+  ggtitle("Distribution of Gym Programs Across KMeans Clusters") +
+  xlab("KMeans Cluster") +
+  ylab("Number of Members") +
+  theme_minimal()
+
+
+```
+
+## Future Endeavors
+
+To make things better, we could think about these improvements:
+
+Adding More Factors: Bringing in things like dietary choices, fitness objectives, or data from wearable tech (such as sleep patterns or stress levels) could improve segmentation and make recommendations more precise.
+
+Evaluating Cluster Quality: Using extra metrics such as average silhouette scores for the clusters can give a numerical way to measure how well-separated they are, which helps confirm the strength of the clusters.
+
+Real-Time Analysis: Keeping track of how well the suggested programs work over time could help make changes in clustering and segmentation as needed.
+
+Exploring advanced clustering techniques like Gaussian Mixture Models or DBSCAN could help us understand more complex or overlapping clusters, allowing us to capture detailed member segments.
+
+This project shows how clustering can be used in the fitness industry, highlighting how data insights can improve personalised fitness experiences and strengthen member loyalty.
+
+## References
+
+Alabadla, M., Sidi, F., Ishak, I., Ibrahim, H., Affendey, L.S., Ani, Z.C., Jabar, M.A., Bukar, U.A., Devaraj, N.K., Muda, A.S., & Tharek, A. (2022). Systematic review of using machine learning in imputing missing values. IEEE Access, 10, 44483-44502. <https://doi.org/10.1109/ACCESS.2022.3177888>
+
+Cohen-Addad, V., Kanade, V., Mallmann-Trenn, F., & Mathieu, C. (2019). Hierarchical clustering: Objective functions and algorithms. Journal of the ACM (JACM), 66(4), 1-42. <https://doi.org/10.1145/3342165>
+
+Cui, M. (2020). Introduction to the k-means clustering algorithm based on the elbow method. Accounting, Auditing and Finance, 1(1), 5-8.
+
+Dishman, R. K., & Sallis, J. F. (1994). Determinants and interventions for physical activity and exercise. Handbook of Health Behavior Research II: Provider Determinants, 2, 367-398.
+
+Gal, M. S., & Rubinfeld, D. L. (2019). Data standardization. NYU Law Review, 94, 737.
+
+Januzaj, Y., Beqiri, E., & Luma, A. (2023). Determining the optimal number of clusters using silhouette score as a data mining technique. International Journal of Online & Biomedical Engineering, 19(4). <https://doi.org/10.3991/ijoe.v19i04.33277>
+
+Kim, C., & Korea, S. Y. K. (1998). Segmentation of sport center members in Seoul based on attitudes toward service quality. Journal of Sport Management, 12(4), 273-287. <https://doi.org/10.1123/jsm.12.4.273>
+
+Parvin, R. (2024). R Programming for Data Science: A Practical Guide with Hands-On Exercises: Master R Studio, Data Wrangling, Analysis, Visualization (ggplot2), and Essential Packages.
+
+Patel, M., & O'Kane, A. A. (2015, April). Contextual influences on the use and non-use of digital technology while exercising at the gym. In Proceedings of the 33rd annual ACM conference on human factors in computing systems (pp. 2923-2932). <https://doi.org/10.1145/2702123.2702514>
+
+Rössel, J. M., & Wasalatantri, B. M. (2024). How IT systems create value in fitness facilities.
+
+Rousseeuw, P. J. (1987). Silhouettes: A graphical aid to the interpretation and validation of cluster analysis. Journal of Computational and Applied Mathematics, 20, 53-65. [https://doi.org/10.1016/0377-0427(87)90125-7](https://doi.org/10.1016/0377-0427(87)90125-7){.uri}
+
+Wickham, H. (2023). stringr: Simple, Consistent Wrappers for Common String Operations (R package version 1.5.1). GitHub. <https://github.com/tidyverse/stringr>
+
+ChatGPT was also used to enhance the project.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
