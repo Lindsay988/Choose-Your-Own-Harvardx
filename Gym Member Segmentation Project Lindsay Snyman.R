@@ -23,7 +23,7 @@ if(!all(sapply(packages, require, character.only = TRUE))) {
 lapply(packages, library, character.only = TRUE)
 
 # Load the gym member dataset, that is placed in the GitHub repository.
-dataset <- vroom::vroom("gym_members_exercise_tracking.csv")
+dataset <- vroom::vroom("~/Choose-Your-Own-Harvardx/gym_members_exercise_tracking.csv")
 
 # To understand the structure of the data, the first few rows of the dataset are displayed.
 head(dataset)
